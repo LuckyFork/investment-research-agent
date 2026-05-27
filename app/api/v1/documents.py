@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.db import get_db_session
 from app.core.logging import get_logger
 from app.core.qdrant_client import get_qdrant
+from app.core.request_context import RequestContext, get_request_context
 from app.db import document_repo
 from app.doc_pipeline.parsers import SUPPORTED_TYPES
 from app.models.common import BaseResponse
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db_session),
+    context: RequestContext = Depends(get_request_context),
 ):
     suffix = Path(file.filename or "").suffix.lstrip(".").lower()
     if suffix not in SUPPORTED_TYPES:
@@ -52,6 +54,8 @@ async def upload_document(
             await document_repo.create_document(
                 session,
                 doc_id=doc_id,
+                tenant_id=context.tenant_id,
+                owner_user_id=context.user_id,
                 filename=file.filename or f"upload.{suffix}",
                 file_type=suffix,
                 file_size=len(content),
@@ -75,8 +79,14 @@ async def upload_document(
 async def get_document(
     doc_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
+    context: RequestContext = Depends(get_request_context),
 ):
-    doc = await document_repo.get_document(session, doc_id)
+    doc = await document_repo.get_document(
+        session,
+        doc_id,
+        tenant_id=context.tenant_id,
+        owner_user_id=context.user_id,
+    )
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return BaseResponse(data=DocumentResponse.model_validate(doc))
@@ -87,8 +97,15 @@ async def list_documents(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_db_session),
+    context: RequestContext = Depends(get_request_context),
 ):
-    docs, total = await document_repo.list_documents(session, page=page, size=size)
+    docs, total = await document_repo.list_documents(
+        session,
+        tenant_id=context.tenant_id,
+        owner_user_id=context.user_id,
+        page=page,
+        size=size,
+    )
     return BaseResponse(
         data=DocumentListResponse(
             documents=[DocumentListItem.model_validate(d) for d in docs],
@@ -103,8 +120,14 @@ async def list_documents(
 async def delete_document(
     doc_id: uuid.UUID,
     session: AsyncSession = Depends(get_db_session),
+    context: RequestContext = Depends(get_request_context),
 ):
-    doc = await document_repo.get_document(session, doc_id)
+    doc = await document_repo.get_document(
+        session,
+        doc_id,
+        tenant_id=context.tenant_id,
+        owner_user_id=context.user_id,
+    )
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 

@@ -60,11 +60,12 @@ def mock_redis_session():
 # ── non-streaming tests ───────────────────────────────────────────────────────
 
 class TestChatNonStream:
-    async def test_returns_content(self, client, mock_redis_session):
+    async def test_returns_content(self, client, mock_redis_session, auth_headers):
         with patch("app.api.v1.chat.run_agent", side_effect=_fake_agent_stream):
             resp = await client.post(
                 "/api/v1/chat/completions",
                 json={"session_id": "s1", "message": "你好", "stream": False},
+                headers=auth_headers,
             )
         assert resp.status_code == 200
         body = resp.json()
@@ -72,29 +73,39 @@ class TestChatNonStream:
         assert body["data"]["content"] == "这是一个测试回答"
         assert body["data"]["session_id"] == "s1"
 
-    async def test_empty_message_rejected(self, client):
+    async def test_empty_message_rejected(self, client, auth_headers):
         resp = await client.post(
             "/api/v1/chat/completions",
             json={"session_id": "s1", "message": "", "stream": False},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
 
-    async def test_blank_message_rejected(self, client):
+    async def test_blank_message_rejected(self, client, auth_headers):
         resp = await client.post(
             "/api/v1/chat/completions",
             json={"session_id": "s1", "message": "   ", "stream": False},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
+
+    async def test_missing_headers_rejected(self, client):
+        resp = await client.post(
+            "/api/v1/chat/completions",
+            json={"session_id": "s1", "message": "你好", "stream": False},
+        )
+        assert resp.status_code == 401
 
 
 # ── streaming tests ───────────────────────────────────────────────────────────
 
 class TestChatStream:
-    async def test_stream_event_sequence(self, client):
+    async def test_stream_event_sequence(self, client, auth_headers):
         with patch("app.api.v1.chat.run_agent", side_effect=_fake_agent_stream):
             resp = await client.post(
                 "/api/v1/chat/completions",
                 json={"session_id": "s2", "message": "分析茅台", "stream": True},
+                headers=auth_headers,
             )
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
@@ -108,11 +119,12 @@ class TestChatStream:
         assert len(done_events) == 1
         assert done_events[0]["session_id"] == "s2"
 
-    async def test_stream_includes_tool_events(self, client):
+    async def test_stream_includes_tool_events(self, client, auth_headers):
         with patch("app.api.v1.chat.run_agent", side_effect=_fake_agent_with_tool):
             resp = await client.post(
                 "/api/v1/chat/completions",
                 json={"session_id": "s3", "message": "茅台2024营收是多少", "stream": True},
+                headers=auth_headers,
             )
         assert resp.status_code == 200
         events = _parse_sse(resp.text)
@@ -130,21 +142,21 @@ class TestChatStream:
 # ── session endpoint tests ────────────────────────────────────────────────────
 
 class TestSessionEndpoints:
-    async def test_get_session_history(self, client, mock_redis_session):
+    async def test_get_session_history(self, client, mock_redis_session, auth_headers):
         from app.models.chat import ChatMessage
         msg = ChatMessage(role="user", content="历史消息")
         mock_redis_session.append(msg.model_dump_json())
 
-        resp = await client.get("/api/v1/chat/sessions/s4")
+        resp = await client.get("/api/v1/chat/sessions/s4", headers=auth_headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["total"] == 1
         assert body["data"]["messages"][0]["content"] == "历史消息"
 
-    async def test_delete_clears_session(self, client, mock_redis_session):
+    async def test_delete_clears_session(self, client, mock_redis_session, auth_headers):
         from app.models.chat import ChatMessage
         mock_redis_session.append(ChatMessage(role="user", content="x").model_dump_json())
 
-        resp = await client.delete("/api/v1/chat/sessions/s5")
+        resp = await client.delete("/api/v1/chat/sessions/s5", headers=auth_headers)
         assert resp.status_code == 200
         assert mock_redis_session == []

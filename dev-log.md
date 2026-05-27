@@ -543,3 +543,659 @@ REDIS_HOST=localhost
 # Qdrant
 QDRANT_HOST=localhost
 ```
+
+---
+
+## Step 8 — 第一轮金融 Agent 安全化（只读受控版）
+
+### 本轮目标
+
+把当前项目从“能回答、能检索的投研助手”推进到“**最基础可控的只读型金融研究助手**”。
+
+这一轮不做交易、不做申请、不做个性化推荐自动执行，优先补齐最关键的控制面：
+
+1. **请求身份上下文**：每个受保护接口都要有 `user_id / tenant_id`，不再允许匿名共享会话。
+2. **文档归属隔离**：上传、查询、删除、检索都必须绑定文档所有者，避免跨用户串文档。
+3. **检索前权限收口**：RAG 不再全库搜索，而是按调用者上下文过滤。
+4. **合规从提示升级为阻断**：不再把违规回答先流给用户再提示，而是在输出前拦截。
+5. **离线可测性修复**：解决 `tiktoken` 在无网环境导入即下载导致测试失败的问题。
+
+### 详细方案
+
+#### 1. 请求上下文与会话隔离
+
+- 新增 `app/core/request_context.py`
+- 通过请求头读取：
+  - `X-User-Id`
+  - `X-Tenant-Id`
+  - `X-Request-Id`
+  - `X-Channel`
+- `chat` / `documents` 路由统一依赖该上下文
+- 会话不再直接使用前端传入的 `session_id`，而是内部拼接为：
+
+```text
+tenant_id:user_id:session_id
+```
+
+这样可以防止不同用户碰撞同一个 `session_id`。
+
+#### 2. 文档 ownership 落库
+
+- 为 `documents` 表增加：
+  - `tenant_id`
+  - `owner_user_id`
+- 新增 Alembic migration：`0d5c9c8a3b10_add_document_ownership.py`
+- 上传文档时写入归属信息
+- 文档查询 / 列表 / 删除时按归属过滤
+
+#### 3. Qdrant 检索隔离
+
+- 文档入向量库时，把以下字段写入 payload：
+  - `tenant_id`
+  - `owner_user_id`
+- `search_documents` 检索时增加 Qdrant filter，只查当前用户自己的文档
+
+这一步把 RAG 从“全局知识库检索”收紧到“当前调用者授权范围内检索”。
+
+#### 4. 合规阻断模式
+
+- 之前链路：
+  - LLM 流式产出文本
+  - 文本已发给前端
+  - 最后再做 regex 合规扫描
+
+- 改造后链路：
+  - 先缓冲 LLM 文本
+  - 结束后执行 `check_compliance`
+  - 合规通过：再把文本返回给用户
+  - 合规失败：不返回原始回答，改为安全阻断文案
+
+这意味着当前实现更接近一个真正的 `guardrail`，虽然仍然是规则版，不是完整策略服务。
+
+#### 5. Tool 调用收口
+
+- `run_agent` 不再“裸执行工具”
+- 工具执行时显式接收 `RequestContext`
+- `top_k` 做服务端 clamp（1~10）
+
+虽然还不是完整的 `policy service + tool gateway`，但已经开始把“工具执行是否合法”从纯 prompt 逻辑收回到后端。
+
+#### 6. 离线环境稳定性
+
+- `app/doc_pipeline/chunker.py` 中把 `tiktoken.get_encoding("cl100k_base")` 从 import 时执行改为惰性加载
+- 如果离线拿不到 encoding 文件，则退化为本地字符切分
+
+这样项目在无网环境下依然能完成测试和大部分本地开发。
+
+### 本轮实际改动
+
+**新增文件**
+
+- `app/core/request_context.py`
+- `migrations/versions/0d5c9c8a3b10_add_document_ownership.py`
+
+**修改主链路**
+
+- `app/api/v1/chat.py`
+- `app/api/v1/documents.py`
+- `app/agent/agent_loop.py`
+- `app/agent/tools.py`
+- `app/agent/retriever.py`
+- `app/tasks/doc_tasks.py`
+- `app/doc_pipeline/chunker.py`
+- `app/db/document_repo.py`
+- `app/db/models.py`
+- `app/models/chat.py`
+- `app/models/document.py`
+
+**测试同步**
+
+- `tests/conftest.py`
+- `tests/test_chat.py`
+- `tests/test_compliance.py`
+- `tests/test_documents.py`
+- `tests/test_memory.py`
+- `tests/test_rag.py`
+
+### 验证结果
+
+本地执行：
+
+```bash
+pytest
+```
+
+结果：
+
+```text
+59 passed in 0.64s
+```
+
+### 这一轮完成后的项目状态
+
+当前项目已经从“投研问答 + RAG Demo”提升到：
+
+**带有基础身份上下文、会话隔离、文档归属过滤、输出阻断式合规检查的只读投研助手。**
+
+但仍然没有完成这些金融 Agent 关键能力：
+
+- 真实登录鉴权 / token 校验
+- 规则版本化 policy service
+- 审计日志落库（trace_id / rule_version / tool_request / tool_response）
+- 用户风险等级 / 产品风险等级 / 适当性校验
+- 人工复核队列
+- 多级工具权限（只读 / 草稿 / 写入 / 高风险动作）
+
+### 下一步建议（Step 9）
+
+优先进入“**策略层与审计层**”：
+
+1. 新增 `policy service`
+   - 统一做工具权限、场景约束、参数白名单、适用边界判断
+2. 新增 `audit service`
+   - 记录请求上下文、工具调用、命中规则、最终输出
+3. 让 LLM 输出从自由文本升级为结构化：
+   - `intent`
+   - `action_proposal`
+   - `citations`
+4. 为高风险场景预留：
+   - 人工复核
+   - badcase 回放
+   - 降级策略
+
+---
+
+## Step 9 — 策略层与审计层（第二步开发）
+
+### 本轮目标
+
+在 Step 8 的“身份隔离 + 文档隔离 + 合规阻断”基础上，继续把项目往金融 Agent 的控制面推进，核心是两件事：
+
+1. **Policy Service**：把“能不能调工具、参数能不能过”从 prompt 内部决策收回后端。
+2. **Audit Service**：把一次对话里的关键动作落成可追溯审计事件。
+
+本轮仍然保持项目定位为**只读型受控投研助手**，不开放写入动作。
+
+### 详细方案
+
+#### 1. Policy Service 的职责
+
+新增 `app/policy/` 模块，专门负责在工具执行前给出一个结构化决策：
+
+- `allowed`
+- `reason_code`
+- `reason`
+- `user_message`
+- `sanitized_args`
+
+对当前唯一工具 `search_documents`，策略层负责：
+
+- 工具是否在 allowlist 中
+- 当前请求是否具备身份上下文
+- `query` 是否为空
+- `top_k` 是否为整数
+- `top_k` 是否超界（服务端收口）
+- 只保留允许的参数字段，过滤杂项参数
+
+这样 `LLM -> tool` 之间第一次有了真正的后端规则闸门。
+
+#### 2. Audit Service 的职责
+
+新增 `app/audit/` 模块，采用“best effort”策略：
+
+- 正常情况下落库
+- 审计系统异常时只记日志，不阻断主业务
+
+本轮设计成**事件流式审计**，而不是一次请求只存一条。这样后续做复盘、badcase、人工复核会更自然。
+
+本轮落库字段包括：
+
+- `trace_id`
+- `session_id`
+- `tenant_id`
+- `user_id`
+- `channel`
+- `event_type`
+- `model_version`
+- `prompt_version`
+- `rule_version`
+- `tool_name`
+- `tool_args`
+- `tool_result_preview`
+- `policy_decision`
+- `compliance_passed`
+- `compliance_issues`
+- `message_preview`
+- `error_message`
+
+#### 3. 数据库设计
+
+新增 `audit_events` 表，对应：
+
+- ORM：`app/db/models.py` 中新增 `AuditEvent`
+- Repo：`app/db/audit_repo.py`
+- Migration：`5f8b2c6e9a71_add_audit_events.py`
+
+当前是 append-only 设计，后续适合做：
+
+- trace 查询
+- 对话回放
+- 规则命中分析
+- 工具使用审计
+
+#### 4. Agent Loop 集成点
+
+在 `app/agent/agent_loop.py` 中插入两个新层次：
+
+**进入对话时**
+
+- 记录 `user_message` 审计事件
+
+**工具调用前**
+
+- 先走 `evaluate_tool_call`
+- 审计 `tool_call`
+- 如果策略通过：
+  - 发 `tool_start`
+  - 真正执行工具
+- 如果策略拦截：
+  - 不执行工具
+  - 直接给模型一个“被策略层阻止”的 tool result
+  - 让模型继续生成安全回复
+
+**工具完成后**
+
+- 审计 `tool_result`
+
+**最终回答时**
+
+- 继续跑 `compliance`
+- 审计 `final_response`
+
+**异常时**
+
+- 审计 `error`
+
+#### 5. 版本化元数据
+
+为了让审计记录更可复盘，本轮补了两个版本号常量：
+
+- `PROMPT_VERSION = "research-agent-v2"`
+- `RULESET_VERSION = "2026-05-23"`
+
+这样后续出了 badcase，至少能知道：
+
+- 用的是哪个 prompt 版本
+- 命中的是哪套规则版本
+- 跑的是哪个模型版本
+
+### 本轮实际改动
+
+**新增模块**
+
+- `app/policy/__init__.py`
+- `app/policy/models.py`
+- `app/policy/service.py`
+- `app/audit/__init__.py`
+- `app/audit/service.py`
+- `app/db/audit_repo.py`
+
+**新增迁移**
+
+- `migrations/versions/5f8b2c6e9a71_add_audit_events.py`
+
+**修改主链路**
+
+- `app/agent/agent_loop.py`
+- `app/agent/llm_client.py`
+- `app/compliance/rules.py`
+- `app/core/request_context.py`
+- `app/db/models.py`
+
+**测试新增**
+
+- `tests/test_policy.py`
+
+**测试辅助更新**
+
+- `tests/conftest.py`
+
+### 验证结果
+
+本地执行：
+
+```bash
+pytest
+```
+
+结果：
+
+```text
+65 passed in 0.61s
+```
+
+### 当前项目状态
+
+做到这一步后，项目已经不只是“带合规扫描的 RAG 助手”，而是具备了更明确的控制结构：
+
+1. 请求有身份上下文
+2. 文档与检索有所有权边界
+3. 输出有阻断式合规检查
+4. 工具执行前有策略判断
+5. 对话关键节点有审计事件
+
+换句话说，项目已经开始接近：
+
+**“有控制平面的只读型金融研究 Agent”**
+
+但还没进入这些更强的金融能力：
+
+- 结构化 `intent / action_proposal / citations`
+- 用户风险等级 / 产品风险等级 / 适当性校验
+- 人工复核工作流
+- 风险分级工具权限
+- 审计查询接口 / badcase 后台
+- 真正的身份认证和 RBAC
+
+### 下一步建议（Step 10）
+
+我建议第三步优先做“**结构化 Agent 决策 + 更完整的 policy contract**”：
+
+1. 让模型显式产出：
+   - `intent`
+   - `action_proposal`
+   - `citations`
+   - `confidence`
+2. 把 policy 从“工具参数校验”升级成：
+   - 场景分类
+   - 是否允许个性化建议
+   - 是否必须转人工
+   - 是否只能输出解释，不允许结论
+3. 增加审计查询与 badcase 回放接口
+4. 预留人工复核队列的数据模型
+
+---
+
+## Step 10 — 结构化决策层与场景级 Policy（第三步开发）
+
+### 本轮目标
+
+把项目从“有策略层和审计层的只读研究助手”继续推进到：
+
+**模型先给结构化决策对象，后端再按场景审批执行的受控研究 Agent。**
+
+这一轮的关键不是再加工具，而是把系统从“自由文本驱动”切换成“结构化决策驱动”。
+
+### 设计思路
+
+前两步已经解决了：
+
+1. 谁能访问什么
+2. 工具执行前有没有最基本的 policy
+3. 关键动作有没有审计留痕
+
+但系统仍然缺一层最关键的中间语义：
+
+- 模型把用户请求理解成什么？
+- 模型下一步准备做什么？
+- 模型有没有足够证据？
+- 这是不是一个建议/高风险请求？
+
+如果没有这层结构化决策，policy 只能看字符串、看工具名，很难做真正的场景级判断。
+
+所以第三步先引入一个 `AgentDecision` schema，让模型明确输出：
+
+- `intent`
+- `action`
+- `evidence`
+- `response`
+
+然后后端根据这个对象做：
+
+- 场景识别
+- 策略审批
+- 工具放行/拦截
+- 最终答复降级
+- 审计增强
+
+### Schema 设计
+
+新增文件：
+
+- `app/models/decision.py`
+
+包含四层结构：
+
+1. `intent`
+   - `intent_type`
+   - `user_goal`
+   - `reasoning`
+   - `confidence`
+
+2. `action`
+   - `action_type`
+   - `requires_tool`
+   - `tool_name`
+   - `tool_args`
+   - `fallback_action`
+   - `fallback_reason`
+
+3. `evidence`
+   - `citations`
+   - `has_sufficient_evidence`
+   - `evidence_gap`
+
+4. `response`
+   - `answer_draft`
+   - `includes_risk_note`
+   - `is_personalized`
+   - `needs_human_review`
+
+当前先覆盖这些意图类型：
+
+- `fact_lookup`
+- `document_summary`
+- `research_analysis`
+- `investment_opinion`
+- `personalized_advice_request`
+- `high_risk_request`
+- `unknown`
+
+以及这些动作类型：
+
+- `answer_directly`
+- `search_documents`
+- `summarize_with_citations`
+- `ask_clarifying_question`
+- `safe_refusal`
+- `handoff_to_human`
+
+### 主链路改造
+
+#### 1. 新增 decisioning 模块
+
+新增：
+
+- `app/agent/decisioning.py`
+
+作用：
+
+1. `plan_next_step`
+   - 让模型先输出严格 JSON 决策对象
+   - 解析成 `AgentDecision`
+
+2. `generate_answer_from_tool`
+   - 当决策需要检索时，用结构化决策 + 工具返回结果生成最终答复
+
+#### 2. agent_loop 切换为两阶段
+
+`app/agent/agent_loop.py` 从原来的：
+
+```text
+用户输入 -> 模型直接决定是否调工具 -> 工具 -> 最终回答
+```
+
+改成：
+
+```text
+用户输入
+  -> 结构化决策（AgentDecision）
+  -> 场景级 Policy 审批
+  -> 可选工具调用
+  -> 最终答复生成
+  -> 合规检查
+```
+
+这一步是第三步开发的核心。
+
+### Policy 升级
+
+原来 `policy` 只校验：
+
+- 工具是否允许
+- 参数是否合法
+
+现在新增：
+
+- `evaluate_agent_decision`
+
+并新增 `ScenePolicyResult`。
+
+新的 policy 开始看“场景”，而不只是“工具参数”。
+
+当前规则包括：
+
+1. `investment_opinion / personalized_advice_request / high_risk_request`
+   - 一律降级
+   - 不允许直接给投资建议
+   - 转为 `handoff_to_human`
+
+2. `unknown`
+   - 不直接回答
+   - 转为 `ask_clarifying_question`
+
+3. `fact_lookup / research_analysis / document_summary`
+   - 允许只读研究链路
+
+4. `document_summary` 且 `has_sufficient_evidence=False`
+   - 不允许直接总结
+   - 要求先补证据或澄清
+
+5. `response.is_personalized=True`
+   - 即便不是 advice intent，也要降级，避免系统悄悄滑向个性化建议
+
+### Audit 增强
+
+为了让第三步的结构化决策可以复盘，本轮为 `audit_events` 增加字段：
+
+- `decision_payload`
+- `intent_type`
+- `action_type`
+- `confidence`
+- `citations`
+- `fallback_reason`
+
+对应修改：
+
+- ORM：`app/db/models.py`
+- Repo：`app/db/audit_repo.py`
+- Service：`app/audit/service.py`
+- Migration：`0f2141d6f4a2_add_decision_fields_to_audit.py`
+
+这样现在审计不再只知道“调了什么工具”，还知道：
+
+- 模型把场景理解成什么
+- 原本想做什么动作
+- 置信度是多少
+- 证据是否充分
+- 为什么被降级
+
+### 本轮实际改动
+
+**新增模块**
+
+- `app/models/decision.py`
+- `app/agent/decisioning.py`
+
+**Policy 扩展**
+
+- `app/policy/models.py`
+- `app/policy/service.py`
+- `app/policy/__init__.py`
+
+**主循环改造**
+
+- `app/agent/agent_loop.py`
+
+**审计字段扩展**
+
+- `app/db/models.py`
+- `app/db/audit_repo.py`
+- `app/audit/service.py`
+- `migrations/versions/0f2141d6f4a2_add_decision_fields_to_audit.py`
+
+**新增测试**
+
+- `tests/test_decision.py`
+
+**更新测试**
+
+- `tests/test_rag.py`
+- `tests/test_compliance.py`
+- `tests/test_memory.py`
+- `tests/test_policy.py`
+
+### 验证结果
+
+执行：
+
+```bash
+pytest
+```
+
+结果：
+
+```text
+69 passed in 0.94s
+```
+
+### 当前项目状态
+
+做到这一步后，项目已经具备三层控制能力：
+
+1. **隔离层**
+   - 请求身份上下文
+   - 会话隔离
+   - 文档 ownership
+   - 检索范围过滤
+
+2. **执行控制层**
+   - 结构化决策 schema
+   - 场景级 policy
+   - 工具级 policy
+   - 输出前合规阻断
+
+3. **可追溯层**
+   - user message
+   - decision
+   - scene policy
+   - tool call
+   - tool result
+   - final response
+   - error
+
+换句话说，当前系统已经从“RAG 投研助手”进化到：
+
+**一个具备结构化决策、场景审批、只读工具受控执行和审计留痕的研究型金融 Agent 雏形。**
+
+### 下一步建议（Step 11）
+
+下一步我建议优先做两件事：
+
+1. **审计查询与 badcase 回放接口**
+   - 按 `trace_id / session_id` 查询整条链路
+   - 为复盘、人工复核和运营监控提供入口
+
+2. **人工复核与高风险降级工作流**
+   - 把 `handoff_to_human` 变成真正的队列或待办项
+   - 为未来接适当性、风险等级、人工审批留出主流程位置

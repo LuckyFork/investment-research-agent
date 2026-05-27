@@ -28,7 +28,7 @@ class ChatStreamEvent(BaseModel):
     session_id: str = ""
     tool_name: str = ""              # tool_start / tool_done
     compliance_passed: bool = True   # compliance event only
-    compliance_issues: list[dict] = []  # list of ComplianceIssue dicts
+    compliance_issues: list[dict] = Field(default_factory=list)  # list of ComplianceIssue dicts
 
 
 class SessionHistoryResponse(BaseModel):

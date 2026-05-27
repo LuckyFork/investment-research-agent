@@ -1,3 +1,6 @@
+from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+from app.core.request_context import RequestContext
 from app.doc_pipeline.embedder import embed_texts
 from app.core.qdrant_client import get_qdrant
 from app.core.config import get_settings
@@ -8,7 +11,11 @@ logger = get_logger(__name__)
 SCORE_THRESHOLD = 0.4
 
 
-async def search_documents(query: str, top_k: int = 5) -> list[dict]:
+async def search_documents(
+    query: str,
+    context: RequestContext,
+    top_k: int = 5,
+) -> list[dict]:
     """Embed query and retrieve the most relevant document chunks from Qdrant."""
     settings = get_settings()
 
@@ -20,6 +27,12 @@ async def search_documents(query: str, top_k: int = 5) -> list[dict]:
         query=query_vec,
         limit=top_k,
         score_threshold=SCORE_THRESHOLD,
+        query_filter=Filter(
+            must=[
+                FieldCondition(key="tenant_id", match=MatchValue(value=context.tenant_id)),
+                FieldCondition(key="owner_user_id", match=MatchValue(value=context.user_id)),
+            ]
+        ),
         with_payload=True,
     )
 

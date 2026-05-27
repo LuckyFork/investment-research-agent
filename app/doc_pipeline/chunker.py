@@ -2,8 +2,12 @@ from dataclasses import dataclass
 import tiktoken
 
 from app.doc_pipeline.parsers.base import ParsedBlock
+from app.core.logging import get_logger
 
-_enc = tiktoken.get_encoding("cl100k_base")
+logger = get_logger(__name__)
+
+_enc = None
+_enc_failed = False
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 50
 
@@ -18,7 +22,11 @@ class TextChunk:
 
 
 def _split_text(text: str) -> list[str]:
-    tokens = _enc.encode(text)
+    enc = _get_encoding()
+    if enc is None:
+        return _split_text_fallback(text)
+
+    tokens = enc.encode(text)
     if len(tokens) <= CHUNK_SIZE:
         return [text]
 
@@ -28,6 +36,36 @@ def _split_text(text: str) -> list[str]:
         end = start + CHUNK_SIZE
         chunks.append(_enc.decode(tokens[start:end]))
         if end >= len(tokens):
+            break
+        start = end - CHUNK_OVERLAP
+    return chunks
+
+
+def _get_encoding():
+    global _enc, _enc_failed
+    if _enc is not None or _enc_failed:
+        return _enc
+
+    try:
+        _enc = tiktoken.get_encoding("cl100k_base")
+    except Exception as exc:
+        _enc_failed = True
+        logger.warning("tiktoken_encoding_unavailable", error=str(exc))
+        return None
+
+    return _enc
+
+
+def _split_text_fallback(text: str) -> list[str]:
+    if len(text) <= CHUNK_SIZE:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = start + CHUNK_SIZE
+        chunks.append(text[start:end])
+        if end >= len(text):
             break
         start = end - CHUNK_OVERLAP
     return chunks

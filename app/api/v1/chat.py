@@ -1,8 +1,13 @@
 from typing import AsyncGenerator
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.agent.agent_loop import run_agent
+from app.core.request_context import (
+    RequestContext,
+    build_scoped_session_id,
+    get_request_context,
+)
 from app.memory.session import clear_session, load_messages
 from app.models.chat import (
     ChatRequest,
@@ -14,33 +19,46 @@ from app.models.common import BaseResponse
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-async def _sse_generator(request: ChatRequest) -> AsyncGenerator[str, None]:
-    async for event in run_agent(request.session_id, request.message):
+async def _sse_generator(
+    request: ChatRequest,
+    context: RequestContext,
+) -> AsyncGenerator[str, None]:
+    scoped_session_id = build_scoped_session_id(context, request.session_id)
+    async for event in run_agent(scoped_session_id, request.message, context):
+        if event.type == "done":
+            event = event.model_copy(update={"session_id": request.session_id})
         yield f"data: {event.model_dump_json()}\n\n"
 
 
 @router.post("/completions")
-async def chat_completions(request: ChatRequest):
+async def chat_completions(
+    request: ChatRequest,
+    context: RequestContext = Depends(get_request_context),
+):
     if request.stream:
         return StreamingResponse(
-            _sse_generator(request),
+            _sse_generator(request, context),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     # Non-streaming: collect all agent events, return final text
     content_parts: list[str] = []
-    session_id = request.session_id
-    async for event in run_agent(session_id, request.message):
+    scoped_session_id = build_scoped_session_id(context, request.session_id)
+    async for event in run_agent(scoped_session_id, request.message, context):
         if event.type == "text":
             content_parts.append(event.content)
 
-    return BaseResponse(data={"content": "".join(content_parts), "session_id": session_id})
+    return BaseResponse(data={"content": "".join(content_parts), "session_id": request.session_id})
 
 
 @router.get("/sessions/{session_id}", response_model=BaseResponse[SessionHistoryResponse])
-async def get_session(session_id: str):
-    messages = await load_messages(session_id)
+async def get_session(
+    session_id: str,
+    context: RequestContext = Depends(get_request_context),
+):
+    scoped_session_id = build_scoped_session_id(context, session_id)
+    messages = await load_messages(scoped_session_id)
     return BaseResponse(
         data=SessionHistoryResponse(
             session_id=session_id,
@@ -51,6 +69,10 @@ async def get_session(session_id: str):
 
 
 @router.delete("/sessions/{session_id}", response_model=BaseResponse[str])
-async def delete_session(session_id: str):
-    await clear_session(session_id)
+async def delete_session(
+    session_id: str,
+    context: RequestContext = Depends(get_request_context),
+):
+    scoped_session_id = build_scoped_session_id(context, session_id)
+    await clear_session(scoped_session_id)
     return BaseResponse(data="cleared")

@@ -27,10 +27,16 @@ def process_document(self, doc_id: str, file_path: str, file_type: str) -> None:
 
 async def _run_pipeline(doc_id: uuid.UUID, file_path: str, file_type: str) -> None:
     session_factory = get_session_factory()
+    tenant_id = ""
+    owner_user_id = ""
 
     async with session_factory() as session:
         async with session.begin():
             await document_repo.update_status(session, doc_id, "processing")
+            doc = await document_repo.get_document(session, doc_id)
+            if doc is not None:
+                tenant_id = doc.tenant_id
+                owner_user_id = doc.owner_user_id
 
     try:
         parser = get_parser(file_type)
@@ -49,6 +55,8 @@ async def _run_pipeline(doc_id: uuid.UUID, file_path: str, file_type: str) -> No
                     vector=embedding,
                     payload={
                         "document_id": str(doc_id),
+                        "tenant_id": tenant_id,
+                        "owner_user_id": owner_user_id,
                         "chunk_index": chunk.chunk_index,
                         "chunk_type": chunk.chunk_type,
                         "text": chunk.text,

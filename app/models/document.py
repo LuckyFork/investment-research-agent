@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 class DocumentResponse(BaseModel):
     id: uuid.UUID
+    tenant_id: str
+    owner_user_id: str
     filename: str
     file_type: str
     file_size: int
@@ -24,6 +26,8 @@ class DocumentUploadResponse(BaseModel):
 
 class DocumentListItem(BaseModel):
     id: uuid.UUID
+    tenant_id: str
+    owner_user_id: str
     filename: str
     file_type: str
     file_size: int

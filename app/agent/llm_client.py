@@ -6,6 +6,8 @@ from app.models.chat import ChatMessage
 
 logger = get_logger(__name__)
 
+PROMPT_VERSION = "research-agent-v2"
+
 SYSTEM_PROMPT = """你是一名专业的投研助手，服务于证券研究和投顾场景。
 你的职责包括：研报问答、公告分析、财务数据解读、跨文档对比分析和合规预检。
 回答时请：

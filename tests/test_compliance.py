@@ -5,7 +5,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.compliance.checker import check_compliance
 from app.compliance.models import ComplianceResult
-from app.models.chat import ChatStreamEvent
+from app.core.request_context import RequestContext
+from app.models.decision import (
+    ActionProposal,
+    ActionType,
+    AgentDecision,
+    EvidenceBundle,
+    IntentAssessment,
+    IntentType,
+    ResponseDraft,
+)
 
 
 # ── rule engine / checker tests ───────────────────────────────────────────────
@@ -97,17 +106,34 @@ class TestComplianceResult:
 
 # ── agent_loop integration tests ──────────────────────────────────────────────
 
-def _make_chunk(content: str | None = None,
-                finish_reason: str | None = None) -> MagicMock:
-    chunk = MagicMock()
-    choice = MagicMock()
-    delta = MagicMock()
-    delta.content = content
-    delta.tool_calls = None
-    choice.delta = delta
-    choice.finish_reason = finish_reason
-    chunk.choices = [choice]
-    return chunk
+def _decision(answer_draft: str) -> AgentDecision:
+    return AgentDecision(
+        intent=IntentAssessment(
+            intent_type=IntentType.RESEARCH_ANALYSIS,
+            user_goal="分析内容",
+            reasoning="测试合规流程",
+            confidence=0.91,
+        ),
+        action=ActionProposal(
+            action_type=ActionType.ANSWER_DIRECTLY,
+            requires_tool=False,
+            tool_name="",
+            tool_args={},
+            fallback_action=ActionType.SAFE_REFUSAL,
+            fallback_reason="",
+        ),
+        evidence=EvidenceBundle(
+            citations=[],
+            has_sufficient_evidence=True,
+            evidence_gap="",
+        ),
+        response=ResponseDraft(
+            answer_draft=answer_draft,
+            includes_risk_note=False,
+            is_personalized=False,
+            needs_human_review=False,
+        ),
+    )
 
 
 class TestAgentLoopCompliance:
@@ -116,25 +142,23 @@ class TestAgentLoopCompliance:
     async def test_compliance_event_emitted_for_clean_response(self):
         from app.agent.agent_loop import run_agent
 
-        chunks = [
-            _make_chunk(content="茅台2024年营收1700亿，同比增长15%。"),
-            _make_chunk(finish_reason="stop"),
-        ]
-
-        async def fake_create(**kwargs):
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
-
         with (
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
-            patch("app.agent.agent_loop.get_llm_client") as mock_client,
+            patch(
+                "app.agent.agent_loop.plan_next_step",
+                new_callable=AsyncMock,
+                return_value=_decision("茅台2024年营收1700亿，同比增长15%。"),
+            ),
         ):
-            mock_client.return_value.chat.completions.create = fake_create
-            events = [e async for e in run_agent("sess-1", "分析茅台")]
+            events = [
+                e async for e in run_agent(
+                    "sess-1",
+                    "分析茅台",
+                    RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                )
+            ]
 
         types = [e.type for e in events]
         assert "compliance" in types
@@ -148,63 +172,61 @@ class TestAgentLoopCompliance:
     async def test_compliance_event_flags_violation(self):
         from app.agent.agent_loop import run_agent
 
-        # LLM produces non-compliant content
-        chunks = [
-            _make_chunk(content="保证您投资必定盈利，零风险。"),
-            _make_chunk(finish_reason="stop"),
-        ]
-
-        async def fake_create(**kwargs):
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
-
         with (
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
-            patch("app.agent.agent_loop.get_llm_client") as mock_client,
+            patch(
+                "app.agent.agent_loop.plan_next_step",
+                new_callable=AsyncMock,
+                return_value=_decision("保证您投资必定盈利，零风险。"),
+            ),
         ):
-            mock_client.return_value.chat.completions.create = fake_create
-            events = [e async for e in run_agent("sess-2", "有什么推荐")]
+            events = [
+                e async for e in run_agent(
+                    "sess-2",
+                    "有什么推荐",
+                    RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                )
+            ]
 
         compliance_event = next(e for e in events if e.type == "compliance")
         assert compliance_event.compliance_passed is False
         assert len(compliance_event.compliance_issues) > 0
 
-        # Conversation still completes normally — text is not blocked
+        # Conversation still completes normally, but raw text is blocked and replaced
         types = [e.type for e in events]
         assert "done" in types
         assert "text" in types
+        blocked_text = "".join(e.content for e in events if e.type == "text")
+        assert "合规保护" in blocked_text
+        assert "保证您投资必定盈利" not in blocked_text
 
-    async def test_event_order_is_text_compliance_done(self):
+    async def test_event_order_is_compliance_text_done(self):
         from app.agent.agent_loop import run_agent
-
-        chunks = [
-            _make_chunk(content="分析结果如下。"),
-            _make_chunk(finish_reason="stop"),
-        ]
-
-        async def fake_create(**kwargs):
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
 
         with (
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
-            patch("app.agent.agent_loop.get_llm_client") as mock_client,
+            patch(
+                "app.agent.agent_loop.plan_next_step",
+                new_callable=AsyncMock,
+                return_value=_decision("分析结果如下。"),
+            ),
         ):
-            mock_client.return_value.chat.completions.create = fake_create
-            events = [e async for e in run_agent("sess-3", "你好")]
+            events = [
+                e async for e in run_agent(
+                    "sess-3",
+                    "你好",
+                    RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                )
+            ]
 
         types = [e.type for e in events]
-        # Strict ordering: all text events → compliance → done
-        last_text_idx = max((i for i, t in enumerate(types) if t == "text"), default=-1)
+        # Strict ordering: compliance gate must run before any user-visible text
+        first_text_idx = min((i for i, t in enumerate(types) if t == "text"), default=-1)
         compliance_idx = types.index("compliance")
         done_idx = types.index("done")
 
-        assert last_text_idx < compliance_idx < done_idx
+        assert compliance_idx < first_text_idx < done_idx

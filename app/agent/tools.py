@@ -1,6 +1,7 @@
 import json
 from app.agent.retriever import search_documents as _search_docs
 from app.core.logging import get_logger
+from app.core.request_context import RequestContext
 
 logger = get_logger(__name__)
 
@@ -50,14 +51,16 @@ def _format_search_results(results: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-async def execute_tool(name: str, args: dict) -> str:
+async def execute_tool(name: str, args: dict, context: RequestContext) -> str:
     """Dispatch a tool call by name and return formatted string result."""
     logger.info("tool_execute", name=name, args=str(args)[:200])
 
     if name == "search_documents":
+        top_k = max(1, min(int(args.get("top_k", 5)), 10))
         results = await _search_docs(
             query=args["query"],
-            top_k=int(args.get("top_k", 5)),
+            context=context,
+            top_k=top_k,
         )
         return _format_search_results(results)
 

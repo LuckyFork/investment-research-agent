@@ -32,3 +32,19 @@ def mock_infra_connections():
         patch("app.main.close_qdrant", new_callable=AsyncMock),
     ):
         yield
+
+
+@pytest.fixture
+def auth_headers():
+    return {
+        "X-User-Id": "user-1",
+        "X-Tenant-Id": "tenant-1",
+        "X-Request-Id": "req-1",
+        "X-Channel": "test",
+    }
+
+
+@pytest.fixture(autouse=True)
+def mock_agent_audit():
+    with patch("app.agent.agent_loop.record_audit_event", new_callable=AsyncMock):
+        yield

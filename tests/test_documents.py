@@ -15,6 +15,8 @@ from app.db.models import Document
 def _make_doc(**kwargs) -> Document:
     defaults = dict(
         id=uuid.uuid4(),
+        tenant_id="tenant-1",
+        owner_user_id="user-1",
         filename="report.pdf",
         file_type="pdf",
         file_size=1024,
@@ -59,7 +61,7 @@ async def doc_client(mock_session):
 # ── upload tests ──────────────────────────────────────────────────────────────
 
 class TestUploadDocument:
-    async def test_upload_pdf_success(self, doc_client, mock_session):
+    async def test_upload_pdf_success(self, doc_client, mock_session, auth_headers):
         doc = _make_doc()
 
         mock_file = AsyncMock()
@@ -75,6 +77,7 @@ class TestUploadDocument:
             resp = await doc_client.post(
                 "/api/v1/documents/upload",
                 files={"file": ("report.pdf", b"%PDF-fake", "application/pdf")},
+                headers=auth_headers,
             )
 
         assert resp.status_code == 202
@@ -83,14 +86,15 @@ class TestUploadDocument:
         assert "document_id" in body["data"]
         mock_task.delay.assert_called_once()
 
-    async def test_upload_unsupported_type_rejected(self, doc_client):
+    async def test_upload_unsupported_type_rejected(self, doc_client, auth_headers):
         resp = await doc_client.post(
             "/api/v1/documents/upload",
             files={"file": ("report.docx", b"fake", "application/octet-stream")},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
 
-    async def test_upload_txt_success(self, doc_client, mock_session):
+    async def test_upload_txt_success(self, doc_client, mock_session, auth_headers):
         doc = _make_doc(filename="notes.txt", file_type="txt")
 
         mock_file = AsyncMock()
@@ -106,6 +110,7 @@ class TestUploadDocument:
             resp = await doc_client.post(
                 "/api/v1/documents/upload",
                 files={"file": ("notes.txt", b"hello world", "text/plain")},
+                headers=auth_headers,
             )
 
         assert resp.status_code == 202
@@ -114,24 +119,24 @@ class TestUploadDocument:
 # ── get / list tests ──────────────────────────────────────────────────────────
 
 class TestGetDocument:
-    async def test_get_existing_document(self, doc_client):
+    async def test_get_existing_document(self, doc_client, auth_headers):
         doc = _make_doc(status="ready", chunk_count=12)
 
         with patch("app.api.v1.documents.document_repo.get_document", new_callable=AsyncMock, return_value=doc):
-            resp = await doc_client.get(f"/api/v1/documents/{doc.id}")
+            resp = await doc_client.get(f"/api/v1/documents/{doc.id}", headers=auth_headers)
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["status"] == "ready"
         assert body["data"]["chunk_count"] == 12
 
-    async def test_get_nonexistent_returns_404(self, doc_client):
+    async def test_get_nonexistent_returns_404(self, doc_client, auth_headers):
         with patch("app.api.v1.documents.document_repo.get_document", new_callable=AsyncMock, return_value=None):
-            resp = await doc_client.get(f"/api/v1/documents/{uuid.uuid4()}")
+            resp = await doc_client.get(f"/api/v1/documents/{uuid.uuid4()}", headers=auth_headers)
 
         assert resp.status_code == 404
 
-    async def test_list_returns_paginated(self, doc_client):
+    async def test_list_returns_paginated(self, doc_client, auth_headers):
         docs = [_make_doc(status="ready") for _ in range(3)]
 
         with patch(
@@ -139,7 +144,7 @@ class TestGetDocument:
             new_callable=AsyncMock,
             return_value=(docs, 3),
         ):
-            resp = await doc_client.get("/api/v1/documents?page=1&size=20")
+            resp = await doc_client.get("/api/v1/documents?page=1&size=20", headers=auth_headers)
 
         assert resp.status_code == 200
         body = resp.json()
@@ -150,7 +155,7 @@ class TestGetDocument:
 # ── delete tests ──────────────────────────────────────────────────────────────
 
 class TestDeleteDocument:
-    async def test_delete_existing(self, doc_client):
+    async def test_delete_existing(self, doc_client, auth_headers):
         doc = _make_doc(status="ready")
         mock_qdrant = AsyncMock()
 
@@ -159,15 +164,15 @@ class TestDeleteDocument:
             patch("app.api.v1.documents.document_repo.delete_document", new_callable=AsyncMock),
             patch("app.api.v1.documents.get_qdrant", return_value=mock_qdrant),
         ):
-            resp = await doc_client.delete(f"/api/v1/documents/{doc.id}")
+            resp = await doc_client.delete(f"/api/v1/documents/{doc.id}", headers=auth_headers)
 
         assert resp.status_code == 200
         assert resp.json()["data"] == "deleted"
         mock_qdrant.delete.assert_awaited_once()
 
-    async def test_delete_nonexistent_returns_404(self, doc_client):
+    async def test_delete_nonexistent_returns_404(self, doc_client, auth_headers):
         with patch("app.api.v1.documents.document_repo.get_document", new_callable=AsyncMock, return_value=None):
-            resp = await doc_client.delete(f"/api/v1/documents/{uuid.uuid4()}")
+            resp = await doc_client.delete(f"/api/v1/documents/{uuid.uuid4()}", headers=auth_headers)
 
         assert resp.status_code == 404
 
@@ -200,6 +205,8 @@ class TestDocumentPipeline:
         with (
             patch("app.tasks.doc_tasks.get_session_factory", return_value=mock_factory),
             patch("app.tasks.doc_tasks.document_repo.update_status", new_callable=AsyncMock),
+            patch("app.tasks.doc_tasks.document_repo.get_document", new_callable=AsyncMock,
+                  return_value=_make_doc()),
             patch("app.tasks.doc_tasks.get_parser") as mock_get_parser,
             patch("app.tasks.doc_tasks.chunk_blocks", return_value=chunks),
             patch("app.tasks.doc_tasks.embed_texts", new_callable=AsyncMock, return_value=embeddings),
@@ -230,6 +237,8 @@ class TestDocumentPipeline:
         with (
             patch("app.tasks.doc_tasks.get_session_factory", return_value=mock_factory),
             patch("app.tasks.doc_tasks.document_repo.update_status", new_callable=AsyncMock) as mock_update,
+            patch("app.tasks.doc_tasks.document_repo.get_document", new_callable=AsyncMock,
+                  return_value=_make_doc()),
             patch("app.tasks.doc_tasks.get_parser") as mock_get_parser,
         ):
             mock_parser = MagicMock()

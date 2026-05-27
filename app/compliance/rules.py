@@ -4,8 +4,10 @@ Each rule maps a regex pattern to a severity level and human-readable descriptio
 Add new rules here; the checker picks them up automatically.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
+
+RULESET_VERSION = "2026-05-23"
 
 
 @dataclass

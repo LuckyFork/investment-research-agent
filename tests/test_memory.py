@@ -4,6 +4,16 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.request_context import RequestContext
+from app.models.decision import (
+    ActionProposal,
+    ActionType,
+    AgentDecision,
+    EvidenceBundle,
+    IntentAssessment,
+    IntentType,
+    ResponseDraft,
+)
 from app.models.chat import ChatMessage, ChatStreamEvent
 
 
@@ -28,16 +38,34 @@ def _make_redis(*, length: int = 0, overflow_raw: list[bytes] | None = None,
     return mock
 
 
-def _make_chunk(content: str | None = None, finish_reason: str | None = None) -> MagicMock:
-    chunk = MagicMock()
-    choice = MagicMock()
-    delta = MagicMock()
-    delta.content = content
-    delta.tool_calls = None
-    choice.delta = delta
-    choice.finish_reason = finish_reason
-    chunk.choices = [choice]
-    return chunk
+def _decision(answer_draft: str = "回答") -> AgentDecision:
+    return AgentDecision(
+        intent=IntentAssessment(
+            intent_type=IntentType.RESEARCH_ANALYSIS,
+            user_goal="继续分析",
+            reasoning="测试摘要传递",
+            confidence=0.88,
+        ),
+        action=ActionProposal(
+            action_type=ActionType.ANSWER_DIRECTLY,
+            requires_tool=False,
+            tool_name="",
+            tool_args={},
+            fallback_action=ActionType.SAFE_REFUSAL,
+            fallback_reason="",
+        ),
+        evidence=EvidenceBundle(
+            citations=[],
+            has_sufficient_evidence=True,
+            evidence_gap="",
+        ),
+        response=ResponseDraft(
+            answer_draft=answer_draft,
+            includes_risk_note=False,
+            is_personalized=False,
+            needs_human_review=False,
+        ),
+    )
 
 
 # ── compressor tests ──────────────────────────────────────────────────────────
@@ -211,19 +239,9 @@ class TestSessionCompression:
 # ── agent_loop summary injection tests ───────────────────────────────────────
 
 class TestAgentLoopSummaryInjection:
-    async def test_summary_injected_into_system_prompt(self):
-        """When load_summary returns text, it must appear in the system message."""
+    async def test_summary_passed_into_plan_next_step(self):
+        """When load_summary returns text, agent_loop must pass it into structured planning."""
         from app.agent.agent_loop import run_agent
-
-        captured: dict = {}
-        chunks = [_make_chunk(content="回答"), _make_chunk(finish_reason="stop")]
-
-        async def fake_create(**kwargs):
-            captured.update(kwargs)
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
 
         with (
             patch("app.agent.agent_loop.load_messages",
@@ -231,28 +249,25 @@ class TestAgentLoopSummaryInjection:
             patch("app.agent.agent_loop.load_summary",
                   new_callable=AsyncMock, return_value="用户在分析贵州茅台2024年财报"),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
-            patch("app.agent.agent_loop.get_llm_client") as mock_client,
+            patch(
+                "app.agent.agent_loop.plan_next_step",
+                new_callable=AsyncMock,
+                return_value=_decision(),
+            ) as mock_plan,
         ):
-            mock_client.return_value.chat.completions.create = fake_create
-            _ = [e async for e in run_agent("sess-8", "继续分析")]
+            _ = [
+                e async for e in run_agent(
+                    "sess-8",
+                    "继续分析",
+                    RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                )
+            ]
 
-        system_content = captured["messages"][0]["content"]
-        assert "历史对话背景" in system_content
-        assert "贵州茅台2024年财报" in system_content
+        assert mock_plan.await_args.args[1] == "用户在分析贵州茅台2024年财报"
 
-    async def test_no_summary_section_when_empty(self):
-        """When there is no summary, the system prompt must not contain the header."""
+    async def test_empty_summary_passed_as_empty_string(self):
+        """When there is no summary, planning should receive an empty string."""
         from app.agent.agent_loop import run_agent
-
-        captured: dict = {}
-        chunks = [_make_chunk(content="回答"), _make_chunk(finish_reason="stop")]
-
-        async def fake_create(**kwargs):
-            captured.update(kwargs)
-            async def _gen():
-                for c in chunks:
-                    yield c
-            return _gen()
 
         with (
             patch("app.agent.agent_loop.load_messages",
@@ -260,10 +275,18 @@ class TestAgentLoopSummaryInjection:
             patch("app.agent.agent_loop.load_summary",
                   new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
-            patch("app.agent.agent_loop.get_llm_client") as mock_client,
+            patch(
+                "app.agent.agent_loop.plan_next_step",
+                new_callable=AsyncMock,
+                return_value=_decision(),
+            ) as mock_plan,
         ):
-            mock_client.return_value.chat.completions.create = fake_create
-            _ = [e async for e in run_agent("sess-9", "你好")]
+            _ = [
+                e async for e in run_agent(
+                    "sess-9",
+                    "你好",
+                    RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                )
+            ]
 
-        system_content = captured["messages"][0]["content"]
-        assert "历史对话背景" not in system_content
+        assert mock_plan.await_args.args[1] == ""
