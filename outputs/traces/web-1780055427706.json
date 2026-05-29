@@ -1,0 +1,292 @@
+{
+  "trace_id": "web-1780055427706",
+  "session_id": "demo-tenant:demo-user:demo-session",
+  "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+  "rule_analysis": {
+    "complexity": "complex",
+    "route": "multi_hop_aggregation",
+    "reasons": [
+      "包含趋势分析需求",
+      "包含归因/原因分析需求",
+      "包含时间范围约束",
+      "问题描述较长"
+    ],
+    "extracted_features": {
+      "has_comparison": false,
+      "has_trend": true,
+      "has_causality": true,
+      "has_summary_intent": false,
+      "has_time_range": true,
+      "has_multiple_entities": false,
+      "has_multiple_metrics": false,
+      "query_length": 35
+    },
+    "sub_queries": [
+      "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。"
+    ],
+    "confidence": 0.84,
+    "source": "rule"
+  },
+  "refined_analysis": {
+    "complexity": "complex",
+    "route": "multi_hop_aggregation",
+    "reasons": [
+      "包含趋势分析需求",
+      "包含归因/原因分析需求",
+      "包含时间范围约束",
+      "包含多个查询子任务（营收数值+增长驱动因素）"
+    ],
+    "extracted_features": {
+      "has_comparison": false,
+      "has_trend": true,
+      "has_causality": true,
+      "has_summary_intent": false,
+      "has_time_range": true,
+      "has_multiple_entities": false,
+      "has_multiple_metrics": false,
+      "query_length": 35
+    },
+    "sub_queries": [
+      "根据已上传文档，贵州茅台2024年营收是多少？",
+      "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+    ],
+    "confidence": 0.92,
+    "source": "llm_refined"
+  },
+  "task_plan": {
+    "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+    "query_analysis": {
+      "complexity": "complex",
+      "route": "multi_hop_aggregation",
+      "reasons": [
+        "包含趋势分析需求",
+        "包含归因/原因分析需求",
+        "包含时间范围约束",
+        "包含多个查询子任务（营收数值+增长驱动因素）"
+      ],
+      "extracted_features": {
+        "has_comparison": false,
+        "has_trend": true,
+        "has_causality": true,
+        "has_summary_intent": false,
+        "has_time_range": true,
+        "has_multiple_entities": false,
+        "has_multiple_metrics": false,
+        "query_length": 35
+      },
+      "sub_queries": [
+        "根据已上传文档，贵州茅台2024年营收是多少？",
+        "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+      ],
+      "confidence": 0.92,
+      "source": "llm_refined"
+    },
+    "execution_mode": "complex_orchestrated",
+    "steps": [
+      {
+        "step_id": "planner",
+        "role": "planner",
+        "instruction": "根据 refined query analysis 生成复杂任务执行计划",
+        "status": "completed",
+        "input_payload": {
+          "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+          "query_analysis": {
+            "complexity": "complex",
+            "route": "multi_hop_aggregation",
+            "reasons": [
+              "包含趋势分析需求",
+              "包含归因/原因分析需求",
+              "包含时间范围约束",
+              "包含多个查询子任务（营收数值+增长驱动因素）"
+            ],
+            "extracted_features": {
+              "has_comparison": false,
+              "has_trend": true,
+              "has_causality": true,
+              "has_summary_intent": false,
+              "has_time_range": true,
+              "has_multiple_entities": false,
+              "has_multiple_metrics": false,
+              "query_length": 35
+            },
+            "sub_queries": [
+              "根据已上传文档，贵州茅台2024年营收是多少？",
+              "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+            ],
+            "confidence": 0.92,
+            "source": "llm_refined"
+          }
+        },
+        "output_payload": {
+          "route": "multi_hop_aggregation",
+          "sub_queries": [
+            "根据已上传文档，贵州茅台2024年营收是多少？",
+            "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+          ]
+        },
+        "error_message": ""
+      },
+      {
+        "step_id": "retrieval_1",
+        "role": "retriever",
+        "instruction": "检索子问题 1 的证据片段",
+        "status": "pending",
+        "input_payload": {
+          "query": "根据已上传文档，贵州茅台2024年营收是多少？",
+          "tool_name": "search_documents",
+          "top_k": 5
+        },
+        "output_payload": {},
+        "error_message": ""
+      },
+      {
+        "step_id": "retrieval_2",
+        "role": "retriever",
+        "instruction": "检索子问题 2 的证据片段",
+        "status": "pending",
+        "input_payload": {
+          "query": "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？",
+          "tool_name": "search_documents",
+          "top_k": 5
+        },
+        "output_payload": {},
+        "error_message": ""
+      },
+      {
+        "step_id": "writer",
+        "role": "writer",
+        "instruction": "基于多子查询证据生成最终带引用回答",
+        "status": "pending",
+        "input_payload": {
+          "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+          "sub_query_count": 2
+        },
+        "output_payload": {},
+        "error_message": ""
+      },
+      {
+        "step_id": "compliance",
+        "role": "compliance",
+        "instruction": "记录最终回答的合规检查结果",
+        "status": "pending",
+        "input_payload": {},
+        "output_payload": {},
+        "error_message": ""
+      }
+    ],
+    "fallback_strategy": "legacy_multi_hop_aggregation"
+  },
+  "step_results": [
+    {
+      "step_id": "planner",
+      "role": "planner",
+      "instruction": "根据 refined query analysis 生成复杂任务执行计划",
+      "status": "completed",
+      "input_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+        "query_analysis": {
+          "complexity": "complex",
+          "route": "multi_hop_aggregation",
+          "reasons": [
+            "包含趋势分析需求",
+            "包含归因/原因分析需求",
+            "包含时间范围约束",
+            "包含多个查询子任务（营收数值+增长驱动因素）"
+          ],
+          "extracted_features": {
+            "has_comparison": false,
+            "has_trend": true,
+            "has_causality": true,
+            "has_summary_intent": false,
+            "has_time_range": true,
+            "has_multiple_entities": false,
+            "has_multiple_metrics": false,
+            "query_length": 35
+          },
+          "sub_queries": [
+            "根据已上传文档，贵州茅台2024年营收是多少？",
+            "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+          ],
+          "confidence": 0.92,
+          "source": "llm_refined"
+        }
+      },
+      "output_payload": {
+        "route": "multi_hop_aggregation",
+        "sub_queries": [
+          "根据已上传文档，贵州茅台2024年营收是多少？",
+          "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？"
+        ]
+      },
+      "error_message": ""
+    },
+    {
+      "step_id": "retrieval_1",
+      "role": "retriever",
+      "instruction": "检索子问题 1 的证据片段",
+      "status": "completed",
+      "input_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收是多少？",
+        "tool_name": "search_documents",
+        "top_k": 5
+      },
+      "output_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收是多少？",
+        "tool_name": "search_documents",
+        "result_preview": "[1] 文档:demo-doc-9c9b0a36-c969-4d9b-b6e7-42d08e863dec  第2页【关键指标】  相关度:0.6085\n贵州茅台研究纪要\n\n一、核心结论\n我们认为公司2024年营收约为1700亿元，利润表现保持稳健，增长主要由高端产品结构升级和渠道优化共同驱动。\n\n二、关键指标\n2024年营收：1700亿元。\n2024年归母净利润：850亿元。\n毛利率维持高位。\n\n三、增长驱动\n1. 高端产品结构升级提升单价和盈利能力。\n2. 渠道优化改善经销效率与终端覆盖。\n3. 品牌力增强带来需求韧性。\n\n四、风险提示\n如果消费需求走弱，或渠道库存上升，增长可能低于预期。\n\n\n---\n\n[2] 文档:demo-doc-94e12065-8e2b-4346-bc95-4e6c138dd759  第2页【关键指标】  相关度:0.6085\n贵州茅台研究纪要\n\n一、核心结论\n我们认为公司2024年营收约为1700亿元，利润表现保持稳健，增长主要由高端产品结构升级和渠道优化共同驱动。\n\n二、关键指标\n2024年营收：1700亿元。\n2024年归母净利润：850亿元。\n毛利率维持高位。\n\n三、增长驱动\n1. 高端产品结构升级提升单价和盈利能力。\n2. 渠道优化改善经销效率与终端覆盖。\n3. 品牌力增强带来需求韧性。\n\n四、风险提示\n如果消费需求走弱，或渠道库存上升，增长可"
+      },
+      "error_message": ""
+    },
+    {
+      "step_id": "retrieval_2",
+      "role": "retriever",
+      "instruction": "检索子问题 2 的证据片段",
+      "status": "completed",
+      "input_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？",
+        "tool_name": "search_documents",
+        "top_k": 5
+      },
+      "output_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收增长的主要驱动因素有哪些？",
+        "tool_name": "search_documents",
+        "result_preview": "[1] 文档:demo-doc-9c9b0a36-c969-4d9b-b6e7-42d08e863dec  第2页【关键指标】  相关度:0.6954\n贵州茅台研究纪要\n\n一、核心结论\n我们认为公司2024年营收约为1700亿元，利润表现保持稳健，增长主要由高端产品结构升级和渠道优化共同驱动。\n\n二、关键指标\n2024年营收：1700亿元。\n2024年归母净利润：850亿元。\n毛利率维持高位。\n\n三、增长驱动\n1. 高端产品结构升级提升单价和盈利能力。\n2. 渠道优化改善经销效率与终端覆盖。\n3. 品牌力增强带来需求韧性。\n\n四、风险提示\n如果消费需求走弱，或渠道库存上升，增长可能低于预期。\n\n\n---\n\n[2] 文档:demo-doc-94e12065-8e2b-4346-bc95-4e6c138dd759  第2页【关键指标】  相关度:0.6954\n贵州茅台研究纪要\n\n一、核心结论\n我们认为公司2024年营收约为1700亿元，利润表现保持稳健，增长主要由高端产品结构升级和渠道优化共同驱动。\n\n二、关键指标\n2024年营收：1700亿元。\n2024年归母净利润：850亿元。\n毛利率维持高位。\n\n三、增长驱动\n1. 高端产品结构升级提升单价和盈利能力。\n2. 渠道优化改善经销效率与终端覆盖。\n3. 品牌力增强带来需求韧性。\n\n四、风险提示\n如果消费需求走弱，或渠道库存上升，增长可"
+      },
+      "error_message": ""
+    },
+    {
+      "step_id": "writer",
+      "role": "writer",
+      "instruction": "基于多子查询证据生成最终带引用回答",
+      "status": "completed",
+      "input_payload": {
+        "query": "根据已上传文档，贵州茅台2024年营收是多少，并简要说明增长驱动因素。",
+        "sub_query_count": 2
+      },
+      "output_payload": {
+        "answer_preview": "根据您提供的两份研究纪要（文档编号：demo-doc-9c9b0a36-c969-4d9b-b6e7-42d08e863dec 和 demo-doc-94e12065-8e2b-4346-bc95-4e6c138dd759），我整理了以下信息供您参考：\n\n**1. 贵州茅台2024年营收数值**\n\n- **营收金额**：两份纪要均指出，公司2024年营收约为**1700亿元**（详见各文档第2页【关键指标】）。\n\n**2. 增长驱动因素**\n\n- 根据纪要中的【增长驱动】部分，2024年营收增长主要由以下三个因素共同驱动：\n  - **高端产品结构升级**：提升产品单价和盈利能力（来源：两份文档第2页）。\n  - **渠道优化**：改善经销效率与终端覆盖能力（来源：同上）。\n  - **品牌力增强**：带来需求韧性，支撑销量稳定（来源：同上）。\n\n需要说明的是，以上数据来自研究机构的预测性分析纪要，并非公司正式披露的年报。正式财务数据请以贵州茅台官方发布的年度报告为准。"
+      },
+      "error_message": ""
+    },
+    {
+      "step_id": "compliance",
+      "role": "compliance",
+      "instruction": "记录最终回答的合规检查结果",
+      "status": "completed",
+      "input_payload": {},
+      "output_payload": {
+        "passed": true,
+        "issues": []
+      },
+      "error_message": ""
+    }
+  ],
+  "final_answer": "根据您提供的两份研究纪要（文档编号：demo-doc-9c9b0a36-c969-4d9b-b6e7-42d08e863dec 和 demo-doc-94e12065-8e2b-4346-bc95-4e6c138dd759），我整理了以下信息供您参考：\n\n**1. 贵州茅台2024年营收数值**\n\n- **营收金额**：两份纪要均指出，公司2024年营收约为**1700亿元**（详见各文档第2页【关键指标】）。\n\n**2. 增长驱动因素**\n\n- 根据纪要中的【增长驱动】部分，2024年营收增长主要由以下三个因素共同驱动：\n  - **高端产品结构升级**：提升产品单价和盈利能力（来源：两份文档第2页）。\n  - **渠道优化**：改善经销效率与终端覆盖能力（来源：同上）。\n  - **品牌力增强**：带来需求韧性，支撑销量稳定（来源：同上）。\n\n需要说明的是，以上数据来自研究机构的预测性分析纪要，并非公司正式披露的年报。正式财务数据请以贵州茅台官方发布的年度报告为准。",
+  "compliance_result": {
+    "passed": true,
+    "issues": []
+  },
+  "fallback_triggered": false,
+  "fallback_reason": "",
+  "artifact_path": ""
+}

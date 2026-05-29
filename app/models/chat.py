@@ -27,6 +27,7 @@ class ChatStreamEvent(BaseModel):
     content: str = ""
     session_id: str = ""
     tool_name: str = ""              # tool_start / tool_done
+    payload: dict = Field(default_factory=dict)  # structured tool metadata
     compliance_passed: bool = True   # compliance event only
     compliance_issues: list[dict] = Field(default_factory=list)  # list of ComplianceIssue dicts
 

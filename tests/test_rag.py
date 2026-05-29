@@ -92,6 +92,7 @@ class TestRetriever:
         assert len(results) == 1
         assert results[0]["text"] == "茅台2024年营收1700亿"
         assert results[0]["score"] == 0.85
+        assert "final_score" in results[0]
         mock_qdrant.query_points.assert_awaited_once()
 
     async def test_search_returns_empty_when_no_hits(self):
@@ -112,6 +113,32 @@ class TestRetriever:
 
         assert results == []
 
+    async def test_hybrid_rerank_promotes_keyword_dense_hit(self):
+        from app.agent.retriever import search_documents
+
+        generic_hit = _qdrant_hit("白酒行业景气度整体回升", score=0.92, doc_id="doc-generic")
+        generic_hit.payload["section_title"] = "行业综述"
+
+        precise_hit = _qdrant_hit("贵州茅台2024年营收1700亿元，净利润表现稳健", score=0.78, doc_id="doc-precise")
+        precise_hit.payload["section_title"] = "财务摘要"
+
+        mock_qdrant = AsyncMock()
+        mock_qdrant.query_points = AsyncMock(return_value=MagicMock(points=[generic_hit, precise_hit]))
+
+        with (
+            patch("app.agent.retriever.embed_texts", new_callable=AsyncMock,
+                  return_value=[[0.2] * 1536]),
+            patch("app.agent.retriever.get_qdrant", return_value=mock_qdrant),
+        ):
+            results = await search_documents(
+                "贵州茅台2024年营收是多少",
+                RequestContext(user_id="user-1", tenant_id="tenant-1"),
+                top_k=2,
+            )
+
+        assert results[0]["document_id"] == "doc-precise"
+        assert results[0]["final_score"] > results[1]["final_score"]
+
 
 # ── tools executor tests ──────────────────────────────────────────────────────
 
@@ -124,6 +151,7 @@ class TestToolsExecutor:
                 "text": "营收数据",
                 "document_id": "doc-1",
                 "score": 0.9,
+                "final_score": 0.95,
                 "chunk_index": 0,
                 "page_num": 3,
                 "section_title": "财务摘要",
@@ -137,9 +165,12 @@ class TestToolsExecutor:
                 RequestContext(user_id="user-1", tenant_id="tenant-1"),
             )
 
-        assert "营收数据" in result
-        assert "doc-1" in result
-        assert "财务摘要" in result
+        assert "营收数据" in result.text
+        assert "doc-1" in result.text
+        assert "财务摘要" in result.text
+        assert "0.95" in result.text
+        assert result.result_count == 1
+        assert result.evidences[0]["document_id"] == "doc-1"
 
     async def test_no_results_returns_not_found_message(self):
         from app.agent.tools import execute_tool
@@ -151,7 +182,8 @@ class TestToolsExecutor:
                 RequestContext(user_id="user-1", tenant_id="tenant-1"),
             )
 
-        assert "未" in result
+        assert "未" in result.text
+        assert result.result_count == 0
 
     async def test_unknown_tool_raises(self):
         from app.agent.tools import execute_tool
@@ -175,6 +207,7 @@ class TestAgentLoop:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch(
                 "app.agent.agent_loop.plan_next_step",
                 new_callable=AsyncMock,
@@ -207,6 +240,7 @@ class TestAgentLoop:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch(
                 "app.agent.agent_loop.plan_next_step",
                 new_callable=AsyncMock,
@@ -254,6 +288,7 @@ class TestAgentLoop:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch("app.agent.agent_loop.plan_next_step", new_callable=AsyncMock),
         ):
             from app.agent.agent_loop import plan_next_step as mock_plan

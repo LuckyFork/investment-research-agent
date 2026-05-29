@@ -1,4 +1,5 @@
 import json
+from pydantic import BaseModel, Field
 from app.agent.retriever import search_documents as _search_docs
 from app.core.logging import get_logger
 from app.core.request_context import RequestContext
@@ -38,6 +39,13 @@ TOOLS: list[dict] = [
 ]
 
 
+class ToolExecutionResult(BaseModel):
+    text: str
+    evidences: list[dict] = Field(default_factory=list)
+    result_count: int = 0
+    top_score: float | None = None
+
+
 def _format_search_results(results: list[dict]) -> str:
     if not results:
         return "未在已上传文档中找到相关内容。"
@@ -45,13 +53,31 @@ def _format_search_results(results: list[dict]) -> str:
     parts: list[str] = []
     for i, r in enumerate(results, 1):
         section = f"【{r['section_title']}】" if r["section_title"] else ""
-        header = f"[{i}] 文档:{r['document_id']}  第{r['page_num']}页{section}  相关度:{r['score']}"
+        relevance = r.get("final_score", r["score"])
+        header = f"[{i}] 文档:{r['document_id']}  第{r['page_num']}页{section}  相关度:{relevance}"
         parts.append(f"{header}\n{r['text']}")
 
     return "\n\n---\n\n".join(parts)
 
 
-async def execute_tool(name: str, args: dict, context: RequestContext) -> str:
+def _serialize_search_results(results: list[dict]) -> list[dict]:
+    serialized: list[dict] = []
+    for item in results:
+        serialized.append(
+            {
+                "document_id": item["document_id"],
+                "page_num": item["page_num"],
+                "section_title": item.get("section_title", ""),
+                "score": item["score"],
+                "final_score": item.get("final_score", item["score"]),
+                "chunk_index": item.get("chunk_index", 0),
+                "snippet": item["text"],
+            }
+        )
+    return serialized
+
+
+async def execute_tool(name: str, args: dict, context: RequestContext) -> ToolExecutionResult:
     """Dispatch a tool call by name and return formatted string result."""
     logger.info("tool_execute", name=name, args=str(args)[:200])
 
@@ -62,6 +88,13 @@ async def execute_tool(name: str, args: dict, context: RequestContext) -> str:
             context=context,
             top_k=top_k,
         )
-        return _format_search_results(results)
+        evidences = _serialize_search_results(results)
+        top_score = evidences[0]["final_score"] if evidences else None
+        return ToolExecutionResult(
+            text=_format_search_results(results),
+            evidences=evidences,
+            result_count=len(evidences),
+            top_score=top_score,
+        )
 
     raise ValueError(f"Unknown tool: {name}")

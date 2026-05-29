@@ -4,11 +4,11 @@ from app.agent.llm_client import PROMPT_VERSION, SYSTEM_PROMPT, get_llm_client
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.chat import ChatMessage
-from app.models.decision import AgentDecision
+from app.models.decision import ActionType, AgentDecision, QueryAnalysis
 
 logger = get_logger(__name__)
 
-DECISION_PROMPT_VERSION = f"{PROMPT_VERSION}-decision-v1"
+DECISION_PROMPT_VERSION = f"{PROMPT_VERSION}-decision-v2"
 
 _DECISION_SYSTEM = f"""{SYSTEM_PROMPT}
 
@@ -24,6 +24,8 @@ _DECISION_SYSTEM = f"""{SYSTEM_PROMPT}
 5. 如果判断证据不足，has_sufficient_evidence 必须为 false，并给出 evidence_gap
 6. 如果需要检索文档，action_type 应为 search_documents 或 summarize_with_citations，并填好 tool_name/tool_args
 7. 如果不应该直接回答，请使用 ask_clarifying_question / safe_refusal / handoff_to_human
+8. 必须参考系统已提供的查询分析结果，尤其是 complexity、route 和 sub_queries
+9. 若 route 是 multi_hop_aggregation，优先输出需要检索文档并做聚合总结的动作
 
 JSON schema:
 {{
@@ -82,26 +84,114 @@ def _extract_json_payload(content: str) -> str:
     return text[start:end + 1]
 
 
-def _history_to_messages(history: list[ChatMessage], summary: str = "") -> list[dict]:
+def _query_analysis_block(query_analysis: QueryAnalysis) -> str:
+    parts = [
+        "[查询分析结果]",
+        f"- complexity: {query_analysis.complexity.value}",
+        f"- route: {query_analysis.route.value}",
+    ]
+    if query_analysis.reasons:
+        parts.append("- reasons:")
+        parts.extend(f"  - {reason}" for reason in query_analysis.reasons)
+    if query_analysis.sub_queries:
+        parts.append("- sub_queries:")
+        parts.extend(f"  - {sub_query}" for sub_query in query_analysis.sub_queries)
+    if query_analysis.extracted_features:
+        parts.append(
+            "- extracted_features: "
+            + json.dumps(query_analysis.extracted_features, ensure_ascii=False, sort_keys=True)
+        )
+    return "\n".join(parts)
+
+
+def _latest_user_query(history: list[ChatMessage]) -> str:
+    for message in reversed(history):
+        if message.role == "user" and message.content.strip():
+            return message.content.strip()
+    return ""
+
+
+def _normalize_tool_selection(
+    decision_payload: dict,
+    history: list[ChatMessage],
+) -> dict:
+    action = decision_payload.get("action") or {}
+    if not isinstance(action, dict):
+        return decision_payload
+
+    raw_action_type = action.get("action_type")
+    try:
+        action_type = ActionType(raw_action_type)
+    except ValueError:
+        return decision_payload
+
+    if action_type not in {
+        ActionType.SEARCH_DOCUMENTS,
+        ActionType.SUMMARIZE_WITH_CITATIONS,
+    } and not action.get("requires_tool", False):
+        return decision_payload
+
+    normalized_payload = dict(decision_payload)
+    normalized_action = dict(action)
+    raw_tool_args = normalized_action.get("tool_args")
+    tool_args = dict(raw_tool_args) if isinstance(raw_tool_args, dict) else {}
+    normalized_tool_name = "search_documents"
+
+    if normalized_action.get("tool_name") != normalized_tool_name:
+        logger.info(
+            "decision_tool_normalized",
+            original_tool_name=normalized_action.get("tool_name", ""),
+            normalized_tool_name=normalized_tool_name,
+            action_type=action_type.value,
+        )
+
+    normalized_action["requires_tool"] = True
+    normalized_action["tool_name"] = normalized_tool_name
+
+    if not str(tool_args.get("query", "")).strip():
+        fallback_query = _latest_user_query(history)
+        if fallback_query:
+            tool_args["query"] = fallback_query
+
+    normalized_action["tool_args"] = tool_args
+    normalized_payload["action"] = normalized_action
+    return normalized_payload
+
+
+def _history_to_messages(
+    history: list[ChatMessage],
+    summary: str = "",
+    query_analysis: QueryAnalysis | None = None,
+) -> list[dict]:
     system = _DECISION_SYSTEM
     if summary:
         system = f"{system}\n\n[历史对话背景]\n{summary}"
+    if query_analysis is not None:
+        system = f"{system}\n\n{_query_analysis_block(query_analysis)}"
     return [{"role": "system", "content": system}] + [
         {"role": msg.role, "content": msg.content} for msg in history
     ]
 
 
-async def plan_next_step(history: list[ChatMessage], summary: str = "") -> AgentDecision:
+async def plan_next_step(
+    history: list[ChatMessage],
+    summary: str = "",
+    query_analysis: QueryAnalysis | None = None,
+) -> AgentDecision:
     settings = get_settings()
     response = await get_llm_client().chat.completions.create(
         model=settings.llm_model,
         max_tokens=1200,
-        messages=_history_to_messages(history, summary),
+        messages=_history_to_messages(history, summary, query_analysis),
     )
     content = response.choices[0].message.content or ""
     payload = _extract_json_payload(content)
     logger.info("decision_generated", prompt_version=DECISION_PROMPT_VERSION)
-    return AgentDecision.model_validate(json.loads(payload))
+    decision_payload = json.loads(payload)
+    decision_payload = _normalize_tool_selection(decision_payload, history)
+    if query_analysis is not None:
+        decision_payload["query_analysis"] = query_analysis.model_dump()
+    return AgentDecision.model_validate(decision_payload)
 
 
 async def generate_answer_from_tool(
@@ -115,6 +205,9 @@ async def generate_answer_from_tool(
     if summary:
         context_parts.append(f"[历史对话背景]\n{summary}")
     context_parts.append(f"[用户问题]\n{user_message}")
+    context_parts.append(
+        "[查询分析]\n" + json.dumps(decision.query_analysis.model_dump(), ensure_ascii=False, indent=2)
+    )
     context_parts.append(
         "[结构化决策]\n" + json.dumps(decision.model_dump(), ensure_ascii=False, indent=2)
     )

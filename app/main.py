@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
@@ -9,7 +10,7 @@ from app.core.tracing import setup_tracing
 from app.core.db import close_db
 from app.core.redis_client import close_redis
 from app.core.qdrant_client import close_qdrant, ensure_collections
-from app.api.v1 import health, chat, documents
+from app.api.v1 import chat, documents, evals, health, traces
 from app.models.common import ErrorResponse
 
 logger = get_logger(__name__)
@@ -46,11 +47,20 @@ def create_app() -> FastAPI:
     )
 
     setup_tracing(app)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Routers
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(documents.router, prefix="/api/v1")
+    app.include_router(traces.router, prefix="/api/v1")
+    app.include_router(evals.router, prefix="/api/v1")
 
     # Global exception handler
     @app.exception_handler(Exception)

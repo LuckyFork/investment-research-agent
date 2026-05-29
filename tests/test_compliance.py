@@ -146,6 +146,7 @@ class TestAgentLoopCompliance:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch(
                 "app.agent.agent_loop.plan_next_step",
                 new_callable=AsyncMock,
@@ -176,6 +177,7 @@ class TestAgentLoopCompliance:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch(
                 "app.agent.agent_loop.plan_next_step",
                 new_callable=AsyncMock,
@@ -209,6 +211,7 @@ class TestAgentLoopCompliance:
             patch("app.agent.agent_loop.load_messages", new_callable=AsyncMock, return_value=[]),
             patch("app.agent.agent_loop.load_summary", new_callable=AsyncMock, return_value=""),
             patch("app.agent.agent_loop.append_message", new_callable=AsyncMock),
+            patch("app.agent.agent_loop.refine_query_analysis", new_callable=AsyncMock),
             patch(
                 "app.agent.agent_loop.plan_next_step",
                 new_callable=AsyncMock,

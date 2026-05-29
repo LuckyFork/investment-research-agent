@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     # File upload
     upload_dir: str = "./uploads"
+    trace_output_dir: str = "./outputs/traces"
+    eval_output_dir: str = "./outputs/eval"
 
     # OpenTelemetry
     otel_enabled: bool = False

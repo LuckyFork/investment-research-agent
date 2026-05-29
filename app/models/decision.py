@@ -22,6 +22,18 @@ class ActionType(str, Enum):
     HANDOFF_TO_HUMAN = "handoff_to_human"
 
 
+class QueryComplexity(str, Enum):
+    SIMPLE = "simple"
+    SUMMARY = "summary"
+    COMPLEX = "complex"
+
+
+class RetrievalRoute(str, Enum):
+    DIRECT_RETRIEVAL = "direct_retrieval"
+    SUMMARY_RETRIEVAL = "summary_retrieval"
+    MULTI_HOP_AGGREGATION = "multi_hop_aggregation"
+
+
 class IntentAssessment(BaseModel):
     intent_type: IntentType
     user_goal: str
@@ -58,7 +70,18 @@ class ResponseDraft(BaseModel):
     needs_human_review: bool = False
 
 
+class QueryAnalysis(BaseModel):
+    complexity: QueryComplexity = QueryComplexity.SIMPLE
+    route: RetrievalRoute = RetrievalRoute.DIRECT_RETRIEVAL
+    reasons: list[str] = Field(default_factory=list)
+    extracted_features: dict = Field(default_factory=dict)
+    sub_queries: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.75, ge=0.0, le=1.0)
+    source: str = "rule"
+
+
 class AgentDecision(BaseModel):
+    query_analysis: QueryAnalysis = Field(default_factory=QueryAnalysis)
     intent: IntentAssessment
     action: ActionProposal
     evidence: EvidenceBundle

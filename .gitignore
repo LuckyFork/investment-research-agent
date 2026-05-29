@@ -12,6 +12,11 @@ build/
 venv/
 env/
 
+# Node / Frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
 # Env
 .env
 .env.local
@@ -35,6 +40,11 @@ docker/volumes/
 # Uploads / temp files
 uploads/
 tmp/
+
+# Local docs (not for public repo)
+dev-log.md
+interview-review.md
+*.pdf
 
 # OS
 .DS_Store

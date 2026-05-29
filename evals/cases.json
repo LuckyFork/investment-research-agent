@@ -1,0 +1,26 @@
+[
+  {
+    "id": "case_001",
+    "query": "贵州茅台2024年营收是多少",
+    "expected_complexity": "simple",
+    "expected_route": "direct_retrieval",
+    "must_include_terms": ["贵州茅台", "2024", "营收"],
+    "should_pass_compliance": true
+  },
+  {
+    "id": "case_002",
+    "query": "总结这份研报对营收增长的判断",
+    "expected_complexity": "summary",
+    "expected_route": "summary_retrieval",
+    "must_include_terms": ["研报", "营收", "增长"],
+    "should_pass_compliance": true
+  },
+  {
+    "id": "case_003",
+    "query": "对比茅台和五粮液近两年营收和利润变化，并分析原因",
+    "expected_complexity": "complex",
+    "expected_route": "multi_hop_aggregation",
+    "must_include_terms": ["茅台", "五粮液", "营收", "利润"],
+    "should_pass_compliance": true
+  }
+]
